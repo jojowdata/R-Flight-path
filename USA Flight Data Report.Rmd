@@ -1,0 +1,570 @@
+---
+title: "Analysis of Flight Data from the USA"
+author: "Joanne White"
+date: "3/16/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,out.width =450,out.height = 400)
+```
+This report looks at flight data for the USA for the first two weeks of July 2015.  In this report we will explore, investigate and visualise the data.
+
+This will help answer questions posed such as investigate.
+
++ which airlines have the most delays?
++ what are the busiest routes
++ is there a relationship between 'distance between airports' and flying time?
++ can we predict flying time based on distance?
+
+    
+#### 1. Import data
+
+Three files imported contained data for airline, airports and flight data for the first two weeks in July 2015. 
+```{r echo=FALSE, include=FALSE}
+library(tidyr)
+library(dplyr)
+library(stringr)
+library(gapminder)
+library(ggplot2)
+library(dslabs)
+library(ggthemes)
+library(ggrepel)
+
+
+# Import the data files 3 csv files into 3 dataframes
+df_airlines <-read.csv("US_airlines.csv",header =TRUE)
+df_airports <-read.csv("US_airports.csv",header =TRUE)
+df_airrecords <-read.csv("US_airrecords14.csv",header =TRUE)
+```
+#### 2. Explore the data
+To look at the data, we looked at the head of the 3 files which displays the first 6 records of each file.
+
+###### Display first 6 records from Airline.csv
+
+```{r echo=FALSE}
+head(df_airlines)
+```
+This shows that airline.csv has 2 columns ITAT_code and what airline it represents.
+
+###### Display first 6 records from Airport.csv
+
+```{r echo=FALSE}
+head(df_airports)
+```
+The airport.csv 7 columns that relate to the airport including location (state) and its exact location in the form of Latitude and longitude. We decided to remove LATITUDE anad LONGDITUDE from the file.
+
+###### Display first 6 records from airrecords.csv
+```{r echo=FALSE}
+head(df_airrecords)
+```
+In the airrecords.csv we can see there are 31 columns.  We decided to remove columns COUNTRY (All flights in USA), WHEELS_ON, WHEELS_OFF,TAXI_IN, TAXI_OUT and ELASPSED_TIME, 
+
+
+### Summary statistics for the three csv files.
+
+###### Display Statistics for each column for airlines file.
+
+```{r echo=FALSE}
+
+print(summary(df_airlines))
+```
+
+###### Display Statistics for each column for airports file.
+
+```{r echo=FALSE}
+print(summary(df_airports))
+```
+
+###### Display Statistics for each column for air records
+
+
+```{r echo=FALSE}
+print(summary(df_airrecords))
+```
+
+It is interesting to note here that there are NA's / blanks that are justified, for example when a flight is not cancelled the reason cancelled will be NA, therefore we leave this.  In some cases there are NA's in Tail number we ignored these for this analyse these were not required.  There were also NA's in the departure and arrival time the assumption here was the flight was cancelled or no time was recorded.
+
+```{r echo=TRUE, include=FALSE}
+# Having looked at the data in the 3 files I decided to removed 3 columns in airports
+# This also removes some blanks Latitude and Longitude
+df_airports <- df_airports %>%
+  select(-c("COUNTRY","LATITUDE","LONGITUDE"))
+# Check the columns in the df to make sure they are removed
+print(colnames(df_airports))
+
+df_airrecords <- df_airrecords %>%
+  select(-c("TAXI_OUT","WHEELS_OFF","WHEELS_ON","TAXI_IN","ELAPSED_TIME"))
+# Check the columns in the df to make sure they are removed
+print(colnames(df_airrecords))
+
+
+###################################################################################
+# Change name of columns to make more sense
+###################################################################################
+
+# Change the name of the "day" column in airrecords to be day_date is actual date 
+colnames(df_airrecords)[colnames(df_airrecords) == 'DAY'] <- 'DAY_DATE'
+print(colnames(df_airrecords))
+
+###################################################################################
+# Transform variables - Airline, Aiport origin and destination
+###################################################################################
+
+# Transform Airline to full name
+df_airrecords <- merge(df_airrecords, df_airlines, by.x = "AIRLINE", by.y = "IATA_CODE")
+# delete the old AIRLINE column,
+cols.dont.want <- "AIRLINE"
+df_airrecords <- df_airrecords[, ! names(df_airrecords) %in% cols.dont.want, drop = F]
+# and rename the new AIRLINE.y column
+colnames(df_airrecords)[colnames(df_airrecords) == 'AIRLINE.y'] <- 'AIRLINE'
+
+# Transform Aiport origin to full name
+ df_airrecords <- merge(df_airrecords, df_airports, by.x = "ORIGIN_AIRPORT", by.y =  "IATA_CODE")
+# Transform Aiport destination to full name
+df_airrecords <- merge(df_airrecords, df_airports, by.x = "DESTINATION_AIRPORT", by.y =  "IATA_CODE")
+
+###################################################################################
+# Transform week days from numbers to days
+###################################################################################
+# Change decision to a factor
+df_airrecords$DAY_OF_WEEK <-as.factor(df_airrecords$DAY_OF_WEEK)
+#print(str(df_airrecords))
+
+#############################
+# Rename the label of the factor
+################################
+
+df_airrecords$DAY_OF_WEEK <- factor(df_airrecords$DAY_OF_WEEK,
+                            levels = c("1","2","3","4","5","6","7"),
+                            labels = c("Mon", "Tues","Wed","Thurs","Fri","Sat","Sun"))
+
+###################################################################################
+# Clean up the data
+###################################################################################
+#####################################
+# Check for NA's and deal with  
+#####################################
+# Displays if any missing values
+#print(table(is.na(df_airrecords)))
+
+# Displays rows with nulls only
+#print (df_airrecords[!complete.cases(df_airrecords),])
+
+
+#####################################
+# Check for blanks NANS and deal with
+#####################################
+# Having looked at the data the NA's are valid in these cases
+# There are number of Tail numbers missing but we shall leave these as is for the moment 
+
+```
+
+#### 3. Visualise  the data
+Here we take a look at the data for trends / points of interest.  
+We use arrival delay to decide if a flight is delayed or not for example anything  less than zero is early, anything equal to zero is on time and anything greater than 0 is deemed late.
+
+We take a look at
+
++ 3.1 How many flights were early, on time or late in the 2 week period?
++ 3.2 A histogram showing  the number of flights for various departure delays.
++ 3.3 The number of flights that were delayed, on time or that didn't leave by day.
++ 3.4 Number of flights by day of the week and arrival type (delayed, on time or early.
++ 3.5 Flights cancelled by day of the week.
++ 3.6 1% random sample of flight arrival delay data by days of the week.
++ 3.7 1% random sample of flight arrival delay data for the two weeks.
++ 3.8 Diverted flights per day of the week of all flights that day.
++ 3.9 Breakdown of flights diverted by day of the week.
++ 3.10 Plot to see number of flights for each state.
++ 3.11 Percent of flights delayed on for each state.
+
+```{r echo=FALSE}
+df_delay <- df_airrecords %>%
+  select(ARRIVAL_DELAY) %>%
+  drop_na(ARRIVAL_DELAY)%>%
+  mutate(ARRIVAL_DELAY = case_when(ARRIVAL_DELAY > 0 ~ "Late", ARRIVAL_DELAY == 0 ~ "On Time", ARRIVAL_DELAY < 0 ~ "Early")) %>%
+  group_by(ARRIVAL_DELAY) %>%
+  count()
+```
+#### 3.1 How many flights were early, on time or late in the 2 week period?
+```{r echo=FALSE}
+# Plot to see the departure delays 
+qplot(x = ARRIVAL_DELAY,weight = n, data = df_delay, geom = "bar",fill= ARRIVAL_DELAY, xlab = "Arrival Status", ylab = "Number of flights",main = "Breakdown of flight arrival times")
+
+n_flights_formatted = format(nrow(df_airrecords), big.mark = ',')
+
+```
+
+Flights that arrived early were `r format(df_delay[1,]$n, big.mark = ",")` out of `r n_flights_formatted`
+This is very interesting that 58% of flights arrived early!
+
+Flights that were late were `r format(df_delay[2,]$n, big.mark = ",")` out of `r n_flights_formatted`
+
+Flights that arrived on time were `r format(df_delay[3,]$n, big.mark = ",")` out of `r n_flights_formatted`
+
+Overall 61% of flights arrived on time!
+
+
+#### 3.2 A histogram showing  the number of flights for various departure delays.
+
+```{r echo=TRUE, include=FALSE}
+flights_depart_del<- df_airrecords %>%
+  # creating a new variable to classify if a flight is on time or delayed
+  select(c(AIRLINE,DEPARTURE_DELAY))%>%
+  drop_na(DEPARTURE_DELAY)%>%
+  mutate(DEPARTURE_DELAY = DEPARTURE_DELAY /60)
+```
+
+```{r echo=FALSE, warning= FALSE}
+# Plot to see the departure delays 
+qplot(x = DEPARTURE_DELAY, data = flights_depart_del, geom = "histogram", xlab = "Departure delay in hours", ylab = "Number of flights",main = "Number of departure delays", binwidth = 0.5)
+```
+
+Here we can see that, surprisingly, that most of the flights have only a small delay at depature time.
+
+
+#### 3.3 The number of flights that were delayed, on time or that didn't leave by day.
+
+```{r echo=FALSE}
+flights <- df_airrecords %>%
+  select(DAY_OF_WEEK, DEPARTURE_DELAY) %>%
+  # creating a new variable to classify if a flight is on time or delayed
+  mutate(dep_type = ifelse(DEPARTURE_DELAY < 2, "on time", "delayed"))
+# plot a bar chart by day
+```
+```{r echo=FALSE}
+qplot(x = DAY_OF_WEEK, fill = dep_type, data = flights, geom = "bar",xlab = "Day of the Week", ylab = "Departure Delay Numbers" ,main = "Delayed vs On Time departures by Day")
+```
+
+Here we can see there seem to roughly be the same delays to departure times each day of the week.
+
+#### 3.4 Number of flights by day of the week and arrival type (delayed, on time or early.
+
+```{r echo=FALSE}
+flights <- df_airrecords %>%
+  # creating a new variable to classify if a flight is on time or delayed
+  mutate(flight.type = ifelse(ARRIVAL_DELAY < 1, "on time", "delayed"))
+```
+
+```{r echo=FALSE}
+qplot(x = DAY_OF_WEEK, fill = flight.type, data = flights, geom = "bar", ylab="Number of flights",xlab ="Day of the Week", main = "Delayed arrivals vs On Time arrivals by Day")
+```
+
+Here we can see the number of flights whose arrival has been delayed  by day Saturday seem to be the best day for minimal delays.
+
+#### 3.5 Flights cancelled by day of the week.
+
+```{r echo=FALSE}
+flights_cancelled <- df_airrecords %>%
+  # creating a new variable to classify if a flight is on time or delayed
+  mutate(cancelled = ifelse(CANCELLED == 1, "flight cancelled", "flight not cancelled"))
+```
+ 
+```{r echo=FALSE}
+qplot(x = DAY_OF_WEEK, fill = cancelled, data = flights_cancelled, geom = "bar",xlab="Day of the Week ", main = "Flights cancelled per day")
+```
+
+The first four days of the week appear to have the most cancellation of flights again 
+Saturday seems to have the least cancellations.
+
+#### 3.6 1% random sample of flight arrival delay data by days of the week.
+```{r echo=FALSE}
+data<- df_airrecords %>% sample_frac(.01)%>%
+  drop_na(ARRIVAL_DELAY)
+```
+
+```{r echo=FALSE, warning = FALSE, message=FALSE}
+geom_smooth(span = 0.1)
+ggplot(data, aes(x=DAY_OF_WEEK, y= ARRIVAL_DELAY)) + 
+  geom_point() +
+  geom_smooth(span = 1)+
+  xlab("Day of Week")+
+  ylab("Delay")+
+  ggtitle("1% sample of flight data ")
+```
+
+To take a different look we did a plot of a sample of the records for arrival delay for each day of the week. The biggest delay to arrival appears to be on a Sunday. 
+
+#### 3.7 1% random sample of flight arrival delay data for the two weeks.
+```{r echo=FALSE}
+data <- df_airrecords %>% 
+  sample_frac(.01)%>% 
+  drop_na(ARRIVAL_DELAY)
+# add a trend line to the plot
+```
+```{r echo=FALSE, warning = FALSE,message=FALSE}
+geom_smooth(span = 0.1)
+ggplot(data, aes(x=DAY_DATE, y= ARRIVAL_DELAY)) + 
+  geom_point() +
+  geom_smooth(span = 1)+
+  ylab("Delay in Arrival time")+
+  xlab("Date in July")+
+  ggtitle("Delay in arrival time by day")
+```  
+
+Then to see if there was a difference over the two week period we plotted Date against delay in arrival time, Monday, Tuesday and Wednesday seem to busiest this could possibly be people flying after the 4th of July we ekend?
+
+
+#### 3.8 Diverted flights per day of the week of all flights that day.
+   
+```{r echo=FALSE}
+flights_diverted <- df_airrecords %>%
+  # creating a new variable to classify if a flight is on time or delayed
+  mutate(diverted_txt = ifelse(DIVERTED == 1, "flight diverted", "flight not diverted"))
+```
+
+```{r echo=FALSE}
+  # Sort out the DAys in the x axis 
+  qplot(x = DAY_OF_WEEK, fill = diverted_txt, data = flights_diverted, geom = "bar", ylab = "",xlab= "Day of the Week", main = "Flights diverted per day")
+```
+
+Here we see diverted flights for days of the week, there are some diverted each day, the weekend appears to have less flights diverted.
+
+#### 3.9 Breakdown of flights diverted by day of the week.
+
+```{r echo=FALSE}
+p<- ggplot(flights_diverted,aes(DAY_OF_WEEK,DIVERTED,fill=DAY_OF_WEEK))+
+  geom_bar(stat="identity",color="black", width = 0.5)+
+  theme(legend.position="none")+
+  xlab("Day of the week")+
+  ylab("Number of flights Diverted")+
+  ggtitle("Flights diverted per day")
+print(p)
+```
+
+The plot above goes into more detail about the flights diverted. Interestingly, the beginning of the week, has most diversions with Wednesday having the most.
+
+#### 3.10 Plot to see number of flights for each state.
+
+```{r echo=FALSE}
+qplot(x = STATE.x, data = df_airrecords,geom = "bar",fill= "no.of flights",xlab ="State",ylab="No.Of flights",main = "No. Of flights to/from a state")+
+  theme(axis.text.x = element_text(angle=90))
+```
+```{r echo=FALSE}
+flights_state <- df_airrecords %>%
+  # creating a new variable to classify if a flight is on time or delayed
+  select(c(DAY_DATE,STATE.x,ARRIVAL_DELAY))%>%
+  drop_na(ARRIVAL_DELAY)%>%
+  mutate(ARRIVAL_DELAY = ifelse(ARRIVAL_DELAY >=0, 1,0))%>%
+  group_by(STATE.x)%>%
+  summarize(perc_delayed = round(mean(ARRIVAL_DELAY)*100,digits = 2))%>%
+  arrange(desc(perc_delayed))
+``` 
+
+Here we can see two states have the most flights these are California and Texas.
+
+#### 3.11 Percent of flights delayed on for each state. 
+
+```{r echo=FALSE}
+p<- ggplot(flights_state,aes(STATE.x ,perc_delayed, fill = STATE.x))+
+  geom_bar(stat="identity",color="black", width = 0.5)+
+  theme(legend.position="none")+
+  theme(axis.text.x = element_text(angle = 90))+
+  xlab("State")+
+  ylab("Percent flights delay ")+
+  ggtitle("Average Flight arrival delay for each state")
+print(p)
+```
+
+Thought it would be interesting to see which state had biggest percentage delay which was AS - America Samoa and GA  - Guam.  Both of these are overseas territories of the USA, that are island, which are possibly more susceptible to delays.
+
+### A. Airlines with the most delays
+
+ Here we look at the airline and arrival delay, we removed NA's as can't estimate these.
+ We created a column based on whether the flight was delayed (1) or not delayed (0).
+ Then calculating what percentage that airline has late
+
+#### i.Percentage of flights delayed by airline.
+```{r echo=FALSE}
+df_mostdelays <- df_airrecords%>%
+  select(c(AIRLINE,ARRIVAL_DELAY))%>%
+  drop_na(ARRIVAL_DELAY)%>%
+  mutate(ARRIVAL_DELAY = ifelse(ARRIVAL_DELAY >=0, 1,0))%>%
+  group_by(AIRLINE)%>%
+  summarize(percent_delayed = round(mean(ARRIVAL_DELAY)*100,digits = 2))%>%
+  arrange(desc(percent_delayed))
+```
+
+```{r echo=FALSE}
+p<- ggplot(df_mostdelays,mapping = aes(reorder(AIRLINE, -percent_delayed), percent_delayed))+ 
+  geom_bar(stat = "identity")+
+  xlab("Airline")+
+  ylab("Percentage Delay")+
+  ggtitle("Percentage of flights delayed by airline")+
+  theme(axis.text.x = element_text(angle = 90))
+print (p)
+```
+
+Looking at the plot Frontier Airline Inc was the airline with the highest percentage of flights delayed, followed by United Airline Inc and Spirit Air Lines. Interestingly Alaska Airlines Inc on average arrived early!
+
+#### ii Average delay per flight by airline
+
+```{r echo= FALSE}
+df_mostdelayed <- df_airrecords%>%
+  select(c(AIRLINE,ARRIVAL_DELAY))%>%
+  drop_na(ARRIVAL_DELAY)%>%
+  group_by(AIRLINE)%>%
+  summarize(average_delay = round(mean(ARRIVAL_DELAY),digits = 2))%>%
+  arrange(desc(average_delay))
+```
+
+```{r echo=FALSE}
+p<- ggplot(df_mostdelayed,mapping = aes(x=reorder(AIRLINE, -average_delay),average_delay, fill=AIRLINE, color=AIRLINE))+ 
+  geom_bar(stat = "identity")+
+  scale_fill_hue("AIRLINE") +
+  xlab("Airline")+
+  ylab("Average delay")+
+  theme(axis.text.x = element_text(angle = 90))+
+  ggtitle("Average delay per flight by Airline")
+print (p)
+```
+
+### B. Busiest Routes 
+Here we created a new column called route made by concatenating the origin and destination airport, and then seeing which had the most flights.
+ 
+
+```{r echo=FALSE}
+df_routes <- df_airrecords%>%
+  select(c(AIRLINE,ORIGIN_AIRPORT, DESTINATION_AIRPORT))%>%
+  #drop_na(ARRIVAL_DEL)%>%
+  unite(route, c(ORIGIN_AIRPORT, DESTINATION_AIRPORT), sep = "-", remove = TRUE) %>%
+  group_by(route) %>%
+  count(route,sort=TRUE,name="Total.flights.per.route")%>%
+  head(10)
+``` 
+#### i. Plot showing busiest route
+```{r echo=FALSE}
+q<- ggplot(df_routes,mapping = aes(x=reorder(route, -Total.flights.per.route),Total.flights.per.route, fill=route, color=route))+ 
+  geom_bar(stat = "identity", width = 0.5)+
+  scale_fill_hue("route") +
+  theme(legend.position="none")+
+  xlab("Route")+
+  ylab("Total Flights per route")+
+  theme(axis.text.x = element_text(angle = 30, hjust = 1, vjust = 1))+
+  ggtitle("Busiest Routes")
+
+print (q)
+
+```
+
+From this we can see that SFO-LAX return , (San Fransico to Los Angeles) was the busiest route, followed by JFK-LAX return , (JFK New York - Los Angeles).
+
+### C. Relationship between distance between airports and flying time
+
+To do this analysis, we used 'DISTANCE' for distance between the 2 airports and 'AIR_TIME' for the actual flight time.
+ 
+```{r echo=FALSE}
+df_distance_airtime <- df_airrecords%>%
+  select(c(DISTANCE,AIR_TIME)) %>%
+  drop_na(DISTANCE,AIR_TIME)
+x <- as.vector(df_distance_airtime$DISTANCE)
+y <- as.vector(df_distance_airtime$AIR_TIME)
+```
+
+Below we have calculated the correlation between 'the distance between airports' and the flying time.
+
+```{r echo=FALSE}
+cor(x,y)
+```
+
+From this we as it is close to 1 can say there is a strong, positive correlation between distance between airports and flying time.
+
+#### Plot to visualise relationship between aiport distance and flight time
+
+```{r echo=FALSE}
+plot(x,y,
+main="Relationship bewteen airport distance and flight time",
+ylab="Flying Time",
+xlab = "Distance")
+```
+
+Looking at the plot there appears to be linear relatoinship between the distance between airports and flying time.
+
+#### We can model the data using a linear regression model
+
+```{r echo=FALSE}
+model1 <- lm(y~x)
+```
+
+Below is the summary data and significance test for linear regression.
+
+```{r echo=FALSE}
+summary(model1)
+```
+
+From the output we can see the residual errors near the top, there is quite a range between the min and max. 
+
+We are then given the Coefficients, here we have the intercept (on the y axis and the slope ('x').  Then we have the Std. Error, were it is the average estimate coefficient that varies form the actual value.  You would want this to be small, which in this case it is.  The t  value is used to calculate the p value which is were it is < 2e-16 *** which signifes it is significant.  This means that we can reject the null hypothsis, that there is not a relationship between distance between airports and flying time.  Therefore, we can say that there is a relationship between flying time and the distance between airports.
+
+Then the next section sees the residual standard error.  This is the average error of flying time of (9.523) for any given distance.
+If we look at the R-squared, (denoting a linear relationship, or how well the model fits the data), 1 is completely dependant (i.e the closer to one the better for a linear relationship).  Here our model has a value of 0.983 , which supports the idea that their is a linear relationship between flying time and distance between airports, but there are some external factors influencing the model e.g. weather. This may be another avenue for investigation.
+
+The f- value is a statistic that is an overall indictor of whether there is a relationship between the flying times and the distance between airports.  The further from 1 the better, so at 1.32e+07 this is a good indictor that the we can reject the null hypothsis and therefore we can again say that there is a  relationship between 'the distance between airports' and flying time. 
+
+It is important that the measures above should not be taken in isolation.  We should also examine the residual plots.
+
+#### Residual Plots
+
+```{r echo=FALSE}
+ #plot the residual models and test 4 assumptions
+layout(matrix(1:4,2,2))
+plot(model1)
+```
+
+The plots above illustrate the four residual plots from the model. 
+
+The first plot shows the Residual vs Fitted. From this we can see that the points are randomly plotted with no pattern on the graph, and points above and below zero. This is a good example of randomness.
+
+The second plot is the Normal Q-Q plot. This tests for normality, (that the residual errors are normally distributed).  The plot above shows that the points follow the line for the most part.  There is some deviation at the end of the plot.  These we think are acceptable.
+
+The third plot is the scale-location plot. This is how you check the assumption of  equal variance (that the plot is random with non pattern). In this case, the line is sloping gently up with equally random, spread points.
+
+In the fourth plot, Residuals vs Leverage.  We are looking for outliers, especially in the top and bottom right hand corners.  Cook's Distance does not make it onto the chart so all points on chart and within Cook's distance.  This would suggest that there are no outliers in this model.
+
+With this in mind having looked at the coeffiecients, model summary and the residual plots we believe that this model meets with the underlining assumptions of linear regression and is suitbale to use for predicting flying times given a distance.
+
+
+
+#### D. Predict flying times
+
+We can use the coefficients from the model to predict flying times. Below are the coefficients for the model 
+```{r echo=FALSE}
+# Predict the flying time of distance 1000
+coeffs = coefficients(model1);coeffs
+# distance, x = 1000, y = flying time
+x=1000
+```
+
+Given a distance of 1000 we get a flying time of: 
+
+```{r echo=FALSE}
+duration = coeffs[1] + coeffs[2]*x
+# flying time for distance of 1000
+duration
+```
+
+We can also use a predict() function to do the same. By creating a dataframe with the distance we are want a predicted flying time for.  We can also set confidence intervals to 95%. 
+
+```{r echo=FALSE}
+newdata = data.frame(duration=1000)
+```
+
+######  So for our test we are looking to predict the time and the 95% confidence intervals for distance of x in this case it is 1000.
+
+```{r echo=FALSE}
+predict(model1,newdata,interval = "confidence")
+```
+From the output you can see the prediction is again 133.075, but this time there are lower (lwr) and upper (upr) confidence limits.  This tells you that the likely location of the actual point. 
+
+###### Predict the time with prediction intervals
+```{r echo=FALSE}
+predict(model1,newdata,interval = "predict")
+```
+
+This time we recalculate the prediction, using predictions intervals.  This time we will see were it thinks the next point will be.  The output shows that the flying time is the same and the next predicted data point is between 114.4093 and 151.4707.
+
+
+
+
+
+
